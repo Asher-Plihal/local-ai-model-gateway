@@ -1,3 +1,4 @@
+# FastAPI proxy that sits in front of Ollama — adds API key auth and per-user usage logging.
 import json
 import time
 import uuid
@@ -16,12 +17,14 @@ config: dict = {}
 
 
 def load_config():
+    # Load keys.json into the global config dict; called once at startup.
     global config
     with open(CONFIG_PATH) as f:
         config = json.load(f)
 
 
 async def require_api_key(request: Request) -> str:
+    # Validate API key from header, return the associated user_id. Raises 401 on failure.
     # Accept X-Api-Key header (curl) or Authorization: Bearer <key> (OpenAI client)
     api_key = request.headers.get("X-Api-Key")
     if not api_key:
@@ -35,6 +38,7 @@ async def require_api_key(request: Request) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: load config and initialize the SQLite usage database.
     load_config()
     await db.init_db()
     yield
@@ -52,6 +56,7 @@ async def chat_completions(
     request: Request,
     user_id: str = Depends(require_api_key),
 ):
+    # Translate an OpenAI-format chat request to Ollama, log usage, return OpenAI-format response.
     session_id = request.headers.get("X-Session-ID", "default")
 
     body = await request.json()
@@ -135,26 +140,31 @@ async def chat_completions(
 
 @app.get("/usage/summary")
 async def usage_summary():
+    # Return aggregate totals across all users.
     return await db.get_summary()
 
 
 @app.get("/usage/by-user")
 async def usage_by_user():
+    # Return per-user token and request counts.
     return await db.get_by_user()
 
 
 @app.get("/usage/by-day")
 async def usage_by_day():
+    # Return daily token and request counts for the last 30 days.
     return await db.get_by_day()
 
 
 @app.get("/usage/sessions")
 async def usage_sessions(limit: int = 20):
+    # Return the most recent sessions, grouped by session_id.
     return await db.get_sessions(limit)
 
 
 @app.get("/usage/speed")
 async def usage_speed():
+    # Return tokens/sec from the most recent inference and last 10.
     return await db.get_speed()
 
 
@@ -164,6 +174,7 @@ async def usage_speed():
 
 @app.get("/health")
 async def health():
+    # Check Ollama reachability and database connectivity, return combined status.
     ollama_status = "ok"
     database_status = "ok"
 

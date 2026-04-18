@@ -1,3 +1,4 @@
+# SQLite persistence for inference request logs and usage analytics queries.
 import aiosqlite
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS inference_log (
 
 
 async def init_db():
+    # Create the inference_log table if it doesn't exist; migrate legacy DBs missing tokens_per_sec.
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute(CREATE_TABLE)
         # Migrate existing DB if tokens_per_sec column doesn't exist yet
@@ -33,6 +35,7 @@ async def init_db():
 
 
 async def get_next_query_num(user_id: str, session_id: str) -> tuple[int, bool]:
+    # Return (next_query_number, is_new_session) for the given user+session pair.
     async with aiosqlite.connect(DB_PATH) as conn:
         async with conn.execute(
             "SELECT MAX(query_num) FROM inference_log WHERE user_id=? AND session_id=?",
@@ -55,6 +58,7 @@ async def log_inference(
     is_new_session: bool,
     tokens_per_sec: float | None = None,
 ):
+    # Insert one inference_log row with timing and token metrics.
     ts = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute(
@@ -70,6 +74,7 @@ async def log_inference(
 
 
 async def get_summary() -> dict:
+    # Return aggregate totals across all inference_log rows.
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute("""
@@ -88,6 +93,7 @@ async def get_summary() -> dict:
 
 
 async def get_by_user() -> list[dict]:
+    # Return per-user token and request counts, ordered by total tokens descending.
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute("""
@@ -108,6 +114,7 @@ async def get_by_user() -> list[dict]:
 
 
 async def get_by_day() -> list[dict]:
+    # Return daily token and request counts for the last 30 days, newest first.
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute("""
@@ -126,6 +133,7 @@ async def get_by_day() -> list[dict]:
 
 
 async def get_sessions(limit: int = 20) -> list[dict]:
+    # Return the most recent sessions grouped by session_id, newest last_active first.
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute("""
@@ -147,6 +155,7 @@ async def get_sessions(limit: int = 20) -> list[dict]:
 
 
 async def get_speed() -> dict:
+    # Return tokens/sec from the most recent timed inference and the last 10.
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
         # Last request with real timing data
